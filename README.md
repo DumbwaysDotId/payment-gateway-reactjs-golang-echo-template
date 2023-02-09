@@ -93,7 +93,7 @@ API request should be done from merchant backend to acquire Snap transaction tok
 
 ### Modify transaction handlers
 
-> File : `server/handlers/transactions.go`
+> File : `server/handlers/transaction.go`
 
 - Import midtrans-go package
 
@@ -107,13 +107,13 @@ API request should be done from merchant backend to acquire Snap transaction tok
   - Create Unique Transaction Id
 
     ```go
-    var TransIdIsMatch = false
-    var TransactionId int
-    for !TransIdIsMatch {
-      TransactionId = userId + request.SellerId + request.ProductId + rand.Intn(10000) - rand.Intn(100)
-      transactionData, _ := h.TransactionRepository.GetTransaction(TransactionId)
+    var transactionIsMatch = false
+    var transactionId int
+    for !transactionIsMatch {
+      transactionId = int(time.Now().Unix())
+      transactionData, _ := h.TransactionRepository.GetTransaction(transactionId)
       if transactionData.ID == 0 {
-        TransIdIsMatch = true
+        transactionIsMatch = true
       }
     }
     ```
@@ -139,86 +139,63 @@ API request should be done from merchant backend to acquire Snap transaction tok
         FName: dataTransactions.Buyer.Name,
         Email: dataTransactions.Buyer.Email,
       },
-      }
+    }
 
     // 3. Execute request create Snap transaction to Midtrans Snap API
     snapResp, _ := s.CreateTransaction(req)
 
-    w.WriteHeader(http.StatusOK)
-    response := dto.SuccessResult{Code: http.StatusOK, Data: snapResp}
-    json.NewEncoder(w).Encode(response)
+    return c.JSON(http.StatusOK, dto.SuccessResult{Code: http.StatusOK, Data: snapResp})
     ```
 
 ### Handle Notification from midtrans
 
-> File : `server/handlers/transactions.go`
+> File : `server/handlers/transaction.go`
 
 - Create function Notification
 
   ```go
-  func (h *handlerTransaction) Notification(w http.ResponseWriter, r *http.Request) {
+  func (h *handlerTransaction) Notification(c echo.Context) error {
     var notificationPayload map[string]interface{}
 
-    err := json.NewDecoder(r.Body).Decode(&notificationPayload)
-    if err != nil {
-      w.WriteHeader(http.StatusBadRequest)
-      response := dto.ErrorResult{Code: http.StatusBadRequest, Message: err.Error()}
-      json.NewEncoder(w).Encode(response)
-      return
+    if err := c.Bind(&notificationPayload); err != nil {
+      return c.JSON(http.StatusBadRequest, dto.ErrorResult{Code: http.StatusBadRequest, Message: err.Error()})
     }
 
     transactionStatus := notificationPayload["transaction_status"].(string)
     fraudStatus := notificationPayload["fraud_status"].(string)
     orderId := notificationPayload["order_id"].(string)
 
+    order_id, _ := strconv.Atoi(orderId)
+
+    fmt.Print("ini payloadnya", notificationPayload)
+
     if transactionStatus == "capture" {
       if fraudStatus == "challenge" {
         // TODO set transaction status on your database to 'challenge'
         // e.g: 'Payment status challenged. Please take action on your Merchant Administration Portal
-        h.TransactionRepository.UpdateTransaction("pending",  orderId)
+        h.TransactionRepository.UpdateTransaction("pending", order_id)
       } else if fraudStatus == "accept" {
         // TODO set transaction status on your database to 'success'
-        h.TransactionRepository.UpdateTransaction("success",  orderId)
+        h.TransactionRepository.UpdateTransaction("success", order_id)
       }
     } else if transactionStatus == "settlement" {
       // TODO set transaction status on your databaase to 'success'
-      h.TransactionRepository.UpdateTransaction("success",  orderId)
+      h.TransactionRepository.UpdateTransaction("success", order_id)
     } else if transactionStatus == "deny" {
       // TODO you can ignore 'deny', because most of the time it allows payment retries
       // and later can become success
-      h.TransactionRepository.UpdateTransaction("failed",  orderId)
+      h.TransactionRepository.UpdateTransaction("failed", order_id)
     } else if transactionStatus == "cancel" || transactionStatus == "expire" {
       // TODO set transaction status on your databaase to 'failure'
-      h.TransactionRepository.UpdateTransaction("failed",  orderId)
+      h.TransactionRepository.UpdateTransaction("failed", order_id)
     } else if transactionStatus == "pending" {
       // TODO set transaction status on your databaase to 'pending' / waiting payment
-      h.TransactionRepository.UpdateTransaction("pending",  orderId)
+      h.TransactionRepository.UpdateTransaction("pending", order_id)
     }
 
-    w.WriteHeader(http.StatusOK)
+    return c.JSON(http.StatusOK, dto.SuccessResult{Code: http.StatusOK, Data: notificationPayload})
   }
   ```
-
-- Create Get One Transaction Data by transaction id
-
-  > File: `server/repositories/transaction.go`
-
-  - Declare GetOneTransaction on TransactionRepository interface
-
-    ```go
-    GetOneTransaction(ID string) (models.Transaction, error)
-    ```
-
-  - Create GetOneTransaction method
-
-    ```go
-    func (r *repository) GetOneTransaction(ID string) (models.Transaction, error) {
-      var transaction models.Transaction
-      err := r.db.Preload("Product").Preload("Product.User").Preload("Buyer").Preload("Seller").First(&transaction, "id = ?", ID).Error
-
-      return transaction, err
-    }
-    ```
 
 - Create Update Transaction Repository with 2 parameter (status, transactionId)
 
@@ -227,17 +204,16 @@ API request should be done from merchant backend to acquire Snap transaction tok
   - Declare UpdateTransaction on TransactionRepository interface
 
     ```go
-    UpdateTransaction(status string, ID string) (error)
+    UpdateTransaction(status string, orderId int) (models.Transaction, error)
     ```
 
   - Create UpdateTransaction method
 
     ```go
-    func (r *repository) UpdateTransaction(status string, ID string) (error) {
+    func (r *repository) UpdateTransaction(status string, orderId int) (models.Transaction, error) {
       var transaction models.Transaction
-      r.db.Preload("Product").First(&transaction, ID)
+      r.db.Preload("Product").Preload("Buyer").Preload("Seller").First(&transaction, orderId)
 
-      // If is different & Status is "success" decrement product quantity
       if status != transaction.Status && status == "success" {
         var product models.Product
         r.db.First(&product, transaction.Product.ID)
@@ -246,10 +222,8 @@ API request should be done from merchant backend to acquire Snap transaction tok
       }
 
       transaction.Status = status
-
       err := r.db.Save(&transaction).Error
-
-      return err
+      return transaction, err
     }
     ```
 
@@ -258,7 +232,7 @@ API request should be done from merchant backend to acquire Snap transaction tok
   > File: `server/routes/transaction.go`
 
   ```go
-  r.HandleFunc("/notification", h.Notification).Methods("POST")
+  e.POST("/notification", h.Notification)
   ```
 
 # Client side (Frontend)
@@ -277,7 +251,7 @@ Displaying Snap Payment Page on Frontend.
     //change this to the script source you want to load, for example this is snap.js sandbox env
     const midtransScriptUrl = "https://app.sandbox.midtrans.com/snap/snap.js";
     //change this according to your client-key
-    const myMidtransClientKey = "Client key here ...";
+    const myMidtransClientKey = process.env.REACT_APP_MIDTRANS_CLIENT_KEY;
 
     let scriptTag = document.createElement("script");
     scriptTag.src = midtransScriptUrl;
@@ -295,34 +269,56 @@ Displaying Snap Payment Page on Frontend.
 
   [Reference](https://docs.midtrans.com/en/other/faq/technical?id=my-developer-uses-react-js-frontend-framework-and-is-unable-to-use-midtransminjssnapjs-what-should-i-do)
 
-* Modify handle buy to display Snap payment page :
+* Modify handle buy to display Snap payment page become like this :
 
   ```javascript
   ...
-  // Insert transaction data
-  const response = await api.post("/transaction", config);
+   const handleBuy = useMutation(async (e) => {
+    try {
+      e.preventDefault();
 
-  const token = response.data.token;
+      const config = {
+        headers: {
+          'Content-type': 'application/json',
+        },
+      };
 
-  window.snap.pay(token, {
-    onSuccess: function (result) {
-      /* You may add your own implementation here */
-      console.log(result);
-      history.push("/profile");
-    },
-    onPending: function (result) {
-      /* You may add your own implementation here */
-      console.log(result);
-      history.push("/profile");
-    },
-    onError: function (result) {
-      /* You may add your own implementation here */
-      console.log(result);
-    },
-    onClose: function () {
-      /* You may add your own implementation here */
-      alert("you closed the popup without finishing the payment");
-    },
+      const data = {
+        product_id: product.id,
+        seller_id: product.user.id,
+        price: product.price,
+      };
+
+      const body = JSON.stringify(data);
+
+      const response = await API.post('/transaction', body, config);
+      console.log("transaction success :", response)
+
+      const token = response.data.data.token;
+      window.snap.pay(token, {
+        onSuccess: function (result) {
+          /* You may add your own implementation here */
+          console.log(result);
+          navigate("/profile");
+        },
+        onPending: function (result) {
+          /* You may add your own implementation here */
+          console.log(result);
+          navigate("/profile");
+        },
+        onError: function (result) {
+          /* You may add your own implementation here */
+          console.log(result);
+          navigate("/profile");
+        },
+        onClose: function () {
+          /* You may add your own implementation here */
+          alert("you closed the popup without finishing the payment");
+        },
+      });
+    } catch (error) {
+      console.log("transaction failed : ", error);
+    }
   });
   ...
   ```
