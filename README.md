@@ -131,6 +131,6 @@
 		h.TransactionRepository.UpdateTransaction("pending", order_id)
 	}
   ```
-  - Make doing 2 step verification & click `Password App`
+  - The result : 
 
     ![img1](./result.png)
