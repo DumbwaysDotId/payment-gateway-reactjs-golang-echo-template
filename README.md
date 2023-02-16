@@ -72,9 +72,11 @@
   go get -u github.com/midtrans/midtrans-go
   ```
 
-#### Environment Variable
+#### Environment Variable in Server
 
-- Make sure to complete the `.env `file
+- Change .env.example to .env so it can be used
+
+- Make sure to complete the `.env `file in server folder
 
   ```env
   SECRET_KEY=suryaganteng
@@ -115,6 +117,18 @@ API request should be done from merchant backend to acquire Snap transaction tok
       if transactionData.ID == 0 {
         transactionIsMatch = true
       }
+    }
+    ```
+    
+    - And use it in the model request like this :
+    ```go
+    transaction := models.Transaction{
+      ID:        transactionId,
+      ProductID: request.ProductID,
+      BuyerID:   int(userId),
+      SellerID:  request.SellerID,
+      Price:     request.Price,
+      Status:    request.Status,
     }
     ```
 
@@ -236,6 +250,17 @@ API request should be done from merchant backend to acquire Snap transaction tok
   ```
 
 # Client side (Frontend)
+
+#### Environment Variable in Server
+
+- Make sure you have an `.env `file in client folder, or just change `env.example` to `.env` (rename it) so it can be used
+
+  ```env
+  REACT_APP_BASE_URL=your-backend-address
+  REACT_APP_MIDTRANS_CLIENT_KEY=your-midtrans-client-key
+  ```
+
+- Btw, if you use CRA (create react app) it is required to have env name with prefix `REACT_APP_` or it won't recognized by react.
 
 Displaying Snap Payment Page on Frontend.
 
